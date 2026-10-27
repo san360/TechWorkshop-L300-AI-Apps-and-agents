@@ -11,6 +11,11 @@ services:
     docker:
       path: ./Dockerfile
       context: .
+      remoteBuild: true
+    hooks:
+      predeploy:
+        shell: sh
+        run: az containerapp ingress update --subscription "$AZURE_SUBSCRIPTION_ID" --resource-group "$AZURE_RESOURCE_GROUP" --name "$application_name" --target-port 8000 --output none
 hooks:
   postprovision:
     shell: sh

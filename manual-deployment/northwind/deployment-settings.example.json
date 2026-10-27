@@ -1,0 +1,13 @@
+{
+  "subscription": "00000000-0000-0000-0000-000000000000",
+  "tenant": "00000000-0000-0000-0000-000000000000",
+  "resource_group": "rg-northwind",
+  "account": "your-foundry-account",
+  "project": "your-foundry-project",
+  "location": "northeurope",
+  "search_sku": "standard",
+  "model": "gpt-5.4-mini",
+  "embedding_model": "text-embedding-3-large",
+  "search_name": "",
+  "storage_name": ""
+}

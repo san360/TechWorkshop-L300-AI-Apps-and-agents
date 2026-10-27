@@ -2,6 +2,9 @@
 // Get your principal object ID via: az ad signed-in-user show --query id -o tsv
 param userPrincipalId string = deployer().objectId
 
+@description('Whether the chat-app resource already exists. azd detects this before provisioning; set true for direct ARM redeployments.')
+param chatAppExists bool = false
+
 @minLength(1)
 @description('Primary location for all resources. Recommended regions: eastus2, swedencentral, francecentral.')
 @metadata({
@@ -212,6 +215,9 @@ resource aiProject 'Microsoft.CognitiveServices/accounts/projects@2025-10-01-pre
   }
   properties: {}
   tags: tags
+  dependsOn: [
+    phiDeployment
+  ]
 }
 
 // Model deployments on the Microsoft Foundry account.
@@ -334,14 +340,29 @@ resource containerAppEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
 // AcrPull role ID
 var acrPullRoleId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 
-@description('Grants the Container App managed identity AcrPull on the Container Registry.')
+resource registryPullIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${containerAppName}-pull'
+  location: location
+  tags: tags
+}
+
+@description('Grants the registry pull identity AcrPull before the Container App is created.')
 resource containerAppAcrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(containerRegistry.id, containerApp.id, acrPullRoleId)
+  name: guid(containerRegistry.id, registryPullIdentity.id, acrPullRoleId)
   scope: containerRegistry
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', acrPullRoleId)
-    principalId: containerApp.identity.principalId
+    principalId: registryPullIdentity.properties.principalId
     principalType: 'ServicePrincipal'
+  }
+}
+
+// Read the existing image before updating the app, avoiding a self-reference.
+module chatAppImage 'containerAppImage.bicep' = {
+  name: 'chat-app-image'
+  params: {
+    name: containerAppName
+    exists: chatAppExists
   }
 }
 
@@ -350,14 +371,17 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: containerAppName
   location: location
   identity: {
-    type: 'SystemAssigned'
+    type: 'SystemAssigned, UserAssigned'
+    userAssignedIdentities: {
+      '${registryPullIdentity.id}': {}
+    }
   }
   properties: {
     managedEnvironmentId: containerAppEnv.id
     configuration: {
       ingress: {
         external: true
-        targetPort: 8000
+        targetPort: chatAppImage.outputs.targetPort
         transport: 'http'
       }
       secrets: [
@@ -369,7 +393,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       registries: [
         {
           server: containerRegistry.properties.loginServer
-          identity: 'system'
+          identity: registryPullIdentity.id
         }
       ]
     }
@@ -377,7 +401,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       containers: [
         {
           name: 'chat-app'
-          image: 'mcr.microsoft.com/k8se/quickstart:latest'
+          image: chatAppImage.outputs.image
           resources: {
             cpu: json('1.0')
             memory: '2Gi'
@@ -425,6 +449,9 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
     }
   }
   tags: union(tags, { 'azd-service-name': 'chat-app' })
+  dependsOn: [
+    containerAppAcrPullRole
+  ]
 }
 
 // Cosmos DB built-in data plane role IDs
@@ -627,4 +654,3 @@ output gpt_endpoint string = aiFoundryEndpoint
 output gpt_api_version string = '2025-01-01-preview'
 output storage_account_name string = storageAccount.name
 output storage_container_name string = 'zava'
-
